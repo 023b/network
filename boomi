@@ -1,0 +1,53 @@
+import redis
+import torch
+import numpy as np
+from torch_geometric.nn import GINConv
+import json
+
+class AdvancedDetector(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = GINConv(torch.nn.Sequential(
+            torch.nn.Linear(512, 256),
+            torch.nn.LeakyReLU(),
+            torch.nn.Linear(256, 128)
+        ))
+        self.conv2 = GINConv(torch.nn.Sequential(
+            torch.nn.Linear(128, 64),
+            torch.nn.LeakyReLU(),
+            torch.nn.Linear(64, 1)
+        ))
+
+    def forward(self, data):
+        x, edge_index = data.x, data.edge_index
+        x = self.conv1(x, edge_index)
+        x = torch.relu(x)
+        return self.conv2(x, edge_index)
+
+model = AdvancedDetector().load_state_dict(torch.load('advanced_ddos.pth'))
+model.eval()
+
+r = redis.Redis(host='192.168.1.102', port=6379)
+
+def visualize_attack(attack_type):
+    r.publish('network_events', json.dumps({
+        'type': 'attack',
+        'node': 104,
+        'target': 101,
+        'color': '#ff0000',
+        'intensity': 0.9
+    }))
+
+def process_traffic(packet):
+    tensor_data = torch.tensor(packet).float()
+    with torch.no_grad():
+        prediction = model(tensor_data)
+    
+    if prediction > 0.92:
+        r.publish('alerts', json.dumps({
+            'source': '192.168.1.104',
+            'target': '192.168.1.101',
+            'type': 'DDoS',
+            'confidence': float(prediction)
+        }))
+        visualize_attack('DDoS')
