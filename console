@@ -1,0 +1,8 @@
+# On all Arch nodes
+sudo pacman -S python python-pip redis mininet scapy npm
+pip install torch torch-geometric flask-socketio visjs-network
+
+# On Lap4 (Visualization Hub)
+npm install vis-network
+sudo systemctl start redis
+python visualization_server.py
