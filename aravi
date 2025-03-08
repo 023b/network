@@ -1,0 +1,117 @@
+from flask import Flask, render_template_string
+from flask_socketio import SocketIO
+import redis
+import threading
+import json
+
+app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*")
+r = redis.Redis(host='192.168.1.102', port=6379)
+
+NETWORK_TOPOLOGY = {
+    "nodes": [
+        {"id": 101, "label": "Enterprise Network", "color": "#00ff00", "shape": "box", "x": 0, "y": 0},
+        {"id": 100, "label": "Detector 1", "color": "#00ff00", "shape": "circle", "x": -300, "y": 200},
+        {"id": 103, "label": "Detector 2", "color": "#00ff00", "shape": "circle", "x": 300, "y": 200},
+        {"id": 102, "label": "Security Hub", "color": "#00ff00", "shape": "database", "x": 0, "y": 400},
+        {"id": 104, "label": "Attacker", "color": "#ff0000", "shape": "triangle", "x": 0, "y": -200}
+    ],
+    "edges": [
+        {"from": 101, "to": 100, "color": "#888888"},
+        {"from": 101, "to": 103, "color": "#888888"},
+        {"from": 100, "to": 102, "color": "#888888"},
+        {"from": 103, "to": 102, "color": "#888888"},
+        {"from": 104, "to": 101, "color": "rgba(255,0,0,0.5)", "dashes": True}
+    ]
+}
+
+def redis_listener():
+    pubsub = r.pubsub()
+    pubsub.subscribe('network_events')
+    for message in pubsub.listen():
+        if message['type'] == 'message':
+            event = json.loads(message['data'])
+            socketio.emit('network_update', event)
+
+@app.route('/')
+def dashboard():
+    return render_template_string('''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Cisco-like Network Monitor</title>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+        <style>
+            #network-container {
+                width: 100vw;
+                height: 100vh;
+                background: #0f0f23;
+            }
+            .vis-tooltip {
+                background: #000 !important;
+                color: #0f0 !important;
+                border: 1px solid #0f0 !important;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="network-container"></div>
+        <script>
+            const container = document.getElementById('network-container');
+            const options = {
+                nodes: { borderWidth: 2 },
+                edges: { width: 2, smooth: { type: 'continuous' } },
+                interaction: { hover: true },
+                physics: { stabilization: true }
+            };
+            
+            const network = new vis.Network(container, {}, options);
+            const socket = io();
+
+            socket.on('network_update', event => {
+                // Update node colors and status
+                const nodes = network.body.data.nodes.map(node => {
+                    if(node.id === event.node) {
+                        return {...node, color: event.color};
+                    }
+                    if(event.attack && node.id === 104) {
+                        network.clustering.updateEdge(node.id, event.target, {color: 'rgba(255,0,0,1)'});
+                    }
+                    return node;
+                });
+
+                // Add attack animation
+                if(event.type === 'attack') {
+                    const ctx = container.getContext('2d');
+                    ctx.beginPath();
+                    ctx.arc(event.x, event.y, 20, 0, 2 * Math.PI);
+                    ctx.fillStyle = 'rgba(255,0,0,0.5)';
+                    ctx.fill();
+                }
+
+                network.setData({
+                    nodes: new vis.DataSet(nodes),
+                    edges: new vis.DataSet(NETWORK_TOPOLOGY.edges)
+                });
+            });
+
+            // Initial setup
+            fetch('/topology').then(r => r.json()).then(data => {
+                network.setData({
+                    nodes: new vis.DataSet(data.nodes),
+                    edges: new vis.DataSet(data.edges)
+                });
+            });
+        </script>
+    </body>
+    </html>
+    ''')
+
+@app.route('/topology')
+def get_topology():
+    return json.dumps(NETWORK_TOPOLOGY)
+
+if __name__ == '__main__':
+    threading.Thread(target=redis_listener).start()
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
