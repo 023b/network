@@ -1,0 +1,39 @@
+import numpy as np
+from mininet.net import Mininet
+from mininet.node import OVSSwitch
+import redis
+import torch
+from torch.cuda.amp import autocast
+
+r = redis.Redis(host='192.168.1.102', port=6379)
+
+class EnterpriseSimulator:
+    def __init__(self):
+        self.net = Mininet(switch=OVSSwitch)
+        self.devices = []
+        self.traffic_model = torch.jit.load('traffic_generator.pt').cuda()
+    
+    @autocast()
+    def generate_traffic(self):
+        z = torch.randn(1, 256).cuda()
+        return self.traffic_model(z).cpu().numpy()
+
+    def create_topology(self):
+        # Enterprise-grade topology
+        core_switch = self.net.addSwitch('s1')
+        for i in range(5):
+            host = self.net.addHost(f'dept{i}', ip=f'10.0.1.{i+1}')
+            self.net.addLink(host, core_switch)
+        
+        server = self.net.addHost('server', ip='10.0.1.100')
+        self.net.addLink(server, core_switch)
+        self.net.start()
+
+    def simulate(self):
+        while True:
+            traffic = self.generate_traffic()
+            r.publish('network_traffic', json.dumps({
+                'source': '192.168.1.101',
+                'traffic': traffic.tolist(),
+                'type': 'legitimate'
+            }))
